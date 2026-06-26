@@ -143,7 +143,39 @@ import { useRoute } from 'vue-router'
 import * as d3 from 'd3'
 import { ElMessage } from 'element-plus'
 import { Plus, VideoPlay, VideoPause, ArrowLeft, FullScreen, RefreshLeft, InfoFilled } from '@element-plus/icons-vue'
-import { NODE_TYPES, FlowEngine, ENGINE_TYPES } from '../engine'
+import {
+  FlowEngine,
+  NODE_TYPES,
+  ENGINE_TYPES,
+  COLORS,
+  GRID_SIZE,
+  NODE_WIDTH,
+  NODE_HEIGHT,
+  NODE_RADIUS,
+  PORT_RADIUS,
+  VIRTUAL_W,
+  VIRTUAL_H,
+  DEFAULT_VIEW_W,
+  DEFAULT_VIEW_H,
+  EXECUTION_INTERVAL,
+  STEP_DELAY,
+  END_NODE_DURATION,
+  MAX_EXECUTION_STEPS,
+  ZOOM_STEP,
+  MIN_ZOOM_W,
+  ZOOM_DURATION,
+  ZOOM_BASE_W,
+  FIT_DURATION,
+  RESET_DURATION,
+  PAN_MIN,
+  GRID_OFFSET,
+  GRID_EXTRA,
+  ZOOM_DEBOUNCE,
+  PATH_GAP,
+  PATH_SNAP_THRESHOLD,
+  PORT_BEND_PENALTY,
+  CONN_HIT_TOLERANCE,
+} from '../engine'
 
 const route = useRoute()
 
@@ -153,22 +185,7 @@ function getTypeInfo(type) {
 }
 
 // ==================== 常量定义 ====================
-
-/** 网格吸附单元 (px) */
-const GRID_SIZE = 20
-/** 每个节点宽度 */
-const NODE_WIDTH = 190
-/** 每个节点高度 */
-const NODE_HEIGHT = 84
-/** 节点圆角半径 */
-const NODE_RADIUS = 12
-/** 连接端口圆点半径 */
-const PORT_RADIUS = 7
-/** 流程动画执行间隔 (ms/步) */
-const EXECUTION_INTERVAL = 1500
-/** 虚拟画布尺寸 */
-const VIRTUAL_W = 5000
-const VIRTUAL_H = 5000
+// 已全部从 src/engine/constants.ts 导入，无本地硬编码
 
 // ==================== 模板引用 ====================
 
@@ -213,7 +230,7 @@ let isDraggingLine = false // 连线拖拽中标志
 
 // 画布平移
 let panX = 0, panY = 0          // 当前平移偏移量 (viewBox x, y)
-let viewW = 1200, viewH = 800   // 当前视口宽高
+let viewW = DEFAULT_VIEW_W, viewH = DEFAULT_VIEW_H   // 当前视口宽高
 const zoomPercent = ref(100)    // 响应式缩放比例
 let isPanning = false           // 平移拖拽中
 let panStart = { x: 0, y: 0 }  // 平移起始位置
@@ -291,7 +308,7 @@ function getPortPosition(node, port) {
  * 所有路径: 起点和终点精确对齐到端口坐标，中间段严格水平/垂直
  */
 function generateOrthogonalPath(fromPos, toPos, fromPort, toPort) {
-  const GAP = 30
+  const GAP = PATH_GAP
   const { x: x1, y: y1 } = fromPos
   const { x: x2, y: y2 } = toPos
 
@@ -588,7 +605,9 @@ function renderNodes() {
       .attr('stroke-width', 2).attr('cursor', 'crosshair')
       .style('opacity', 0) // 默认隐藏，hover 时显示
       .on('mousedown.port', function (event, d) {
+        event.preventDefault()
         event.stopPropagation()
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
         startConnectionDrag(event, d, port)
       })
   })
@@ -671,9 +690,12 @@ function renderNodes() {
 /**
  * 创建 D3 drag 行为 — 节点拖拽
  * 拖拽时自动吸附 GRID_SIZE 网格
+ *
+ * filter: 排除端口圆点上的点击，防止与端口连线拖拽冲突
  */
 function createNodeDrag() {
   return d3.drag()
+    .filter(event => !event.target.closest('.port'))
     .on('start', function () {
       d3.select(this).attr('cursor', 'grabbing').raise()
     })
@@ -682,9 +704,9 @@ function createNodeDrag() {
       d.x = Math.round(event.x / GRID_SIZE) * GRID_SIZE
       d.y = Math.round(event.y / GRID_SIZE) * GRID_SIZE
 
-      // 虚拟画布边界限制（防止拖到不可见区域）
-      d.x = Math.max(0, Math.min(d.x, VIRTUAL_W - d.width))
-      d.y = Math.max(0, Math.min(d.y, VIRTUAL_H - d.height))
+      // 虚拟画布边界限制（允许负值，匹配网格覆盖范围 -2000 ~ VIRTUAL_W）
+      d.x = Math.max(PAN_MIN, Math.min(d.x, VIRTUAL_W - d.width))
+      d.y = Math.max(PAN_MIN, Math.min(d.y, VIRTUAL_H - d.height))
 
       d3.select(this).attr('transform', `translate(${d.x}, ${d.y})`)
       // 拖拽时同步更新连线路径
@@ -762,11 +784,20 @@ function startConnectionDrag(event, fromNode, fromPort) {
 
   isDraggingLine = true
 
-  const onMouseMove = (e) => {
+  /** 将屏幕像素坐标转换为 SVG viewBox 用户坐标 */
+  const screenToSVG = (sx, sy) => {
     const rect = portalEl.getBoundingClientRect()
-    const px = e.clientX - rect.left
-    const py = e.clientY - rect.top
-    dragLine.attr('d', generateOrthogonalPath(fromPos, { x: px, y: py }, fromPort, 'right'))
+    const rx = (sx - rect.left) / rect.width
+    const ry = (sy - rect.top) / rect.height
+    return {
+      x: panX + rx * viewW,
+      y: panY + ry * viewH,
+    }
+  }
+
+  const onMouseMove = (e) => {
+    const pos = screenToSVG(e.clientX, e.clientY)
+    dragLine.attr('d', generateOrthogonalPath(fromPos, pos, fromPort, 'right'))
   }
 
   const onMouseUp = (e) => {
@@ -776,10 +807,10 @@ function startConnectionDrag(event, fromNode, fromPort) {
 
     if (dragLine) { dragLine.remove(); dragLine = null }
 
-    // 检测松手位置是否在某个目标节点范围内
-    const rect = portalEl.getBoundingClientRect()
-    const px = e.clientX - rect.left
-    const py = e.clientY - rect.top
+    // 检测松手位置是否在某个目标节点范围内（使用 SVG 坐标）
+    const pos = screenToSVG(e.clientX, e.clientY)
+    const px = pos.x
+    const py = pos.y
 
     for (const node of nodes) {
       if (node.id === fromNode.id) continue // 不能连自己
@@ -1005,6 +1036,7 @@ function executeEndNode(node) {
 
 /**
  * 动画 token — 从 prevNode 沿连线飞到当前活跃节点
+ * 支持分支预览: 多出线时短暂显示所有可能路径
  */
 function animateTokenToCurrent() {
   clearExecutionAnimation()
@@ -1024,12 +1056,26 @@ function animateTokenToCurrent() {
 
     executionConnId = conn.id
 
+    // === 分支预览: 若 prevNode 有多条出线，先短暂显示所有路径 ===
+    const allOutgoing = connections.filter(c => c.fromNodeId === prevNode.id)
+    if (allOutgoing.length > 1) {
+      allOutgoing.forEach(edge => {
+        connectionGroup.selectAll('g.connection')
+          .filter(d => d.id === edge.id)
+          .select('path.conn-path')
+          .transition().duration(200)
+          .attr('stroke', edge.id === conn.id ? COLORS.lineFlow : COLORS.warning)
+          .attr('stroke-width', edge.id === conn.id ? 3 : 1.5)
+          .attr('opacity', edge.id === conn.id ? 1 : 0.4)
+      })
+    }
+
     // 高亮该连线并启动流动动画
     connectionGroup.selectAll('g.connection')
       .filter(d => d.id === conn.id)
       .select('path.conn-path')
       .attr('opacity', 0.3)
-      .attr('stroke', '#1E90FF')
+      .attr('stroke', COLORS.lineFlow)
 
     const flowPath = connectionGroup.selectAll('g.connection')
       .filter(d => d.id === conn.id)
@@ -1327,7 +1373,7 @@ function onResize() {
 
 /** 同步响应式缩放百分比 */
 function updateZoomPercent() {
-  zoomPercent.value = Math.round(1200 / viewW * 100)
+  zoomPercent.value = Math.round(ZOOM_BASE_W / viewW * 100)
 }
 
 /** 获取所有节点的包围盒中心点（空画布时返回原点） */
