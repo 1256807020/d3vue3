@@ -514,6 +514,7 @@ export class FlowEngine extends EventEmitter {
         time: Date.now(),
         nodeId: node.id,
         nodeName: node.name,
+        nodeType: node.nodeType,
         action: 'error',
         operator: DEFAULT_OPERATOR,
         opinion: err instanceof Error ? err.message : String(err),

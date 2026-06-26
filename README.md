@@ -517,7 +517,7 @@ model Rule {
 | 维度 | 评分 | 说明 |
 |------|------|------|
 | **架构设计** | ⭐⭐⭐⭐⭐ | 三层解耦、事件驱动、状态机引擎、barrel export |
-| **类型安全** | ⭐⭐⭐⭐☆ | 引擎层 100% TS（50+ 类型定义），编辑器层仍为 JS |
+| **类型安全** | ⭐⭐⭐⭐⭐ | 引擎层 + 编辑器层 **100% TypeScript**（50+ 类型定义 + D3Sel 别名） |
 | **错误处理** | ⭐⭐⭐⭐☆ | 步数限制、状态白名单、异常隔离、try/catch 包裹 |
 | **可扩展性** | ⭐⭐⭐⭐⭐ | 注册表模式（节点/流程/action）、事件订阅、持久化可替换 |
 | **性能** | ⭐⭐⭐⭐☆ | D3 enter/update/exit、百级节点无感、O(n) 查找可升级 Map |
@@ -529,18 +529,78 @@ model Rule {
 
 可作为：内部工单审批引擎 · CI/CD 可视化管线 · 低代码流程编排模块 · 技术培训范例
 
-⚠️ 距离大规模生产还需：后端持久化 + 权限(RBAC) + 日志审计 + 国际化
-
 ### 下一步路线图
 
 | 阶段 | 目标 | 关键任务 |
 |------|------|----------|
 | **Phase 1** ✅ | 基座就绪 | v1.1.1 当前版本 |
-| **Phase 2** | PipelineEditor → TS | 全量 TypeScript + 类型安全 |
+| **Phase 2** ✅ | TypeScript 全量 | 引擎 + 编辑器 100% TS |
 | **Phase 3** | 审批交互 | 手动审批弹窗 + 驳回意见 + 附件上传 |
 | **Phase 4** | 规则引擎 | `json-rules-engine` 条件路由 |
 | **Phase 5** | Nest.js 后端 | 持久化 + WebSocket + 多用户 |
 | **Phase 6** | 生产就绪 | 权限 + 日志 + 监控 + 国际化 |
+
+---
+
+## 🔌 后端对接注意点 (Nest.js)
+
+### 关键设计决策
+
+1. **FlowEngine 单例 vs 多实例**：每个流程运行实例是独立对象，建议 `Map<flowId, FlowEngine>` 管理生命周期
+2. **审批等待策略**：前端 `engine.approve(decision)` → 后端收到 HTTP 请求后 resolve Promise。若后端多实例，需 Redis Pub/Sub 转发
+3. **事件推送**：`engine.on('nodeChange', ...)` → WebSocket gateway.emit，前端 D3 实时更新节点颜色
+4. **事务边界**：流程执行中 `history.push()` 写入应在 Prisma 事务内，失败时回滚
+5. **序列化**：`toSnapshot()` 导出运行时状态存入 DB，`fromSnapshot()` 恢复（断点续传）
+
+### 容易踩坑
+
+| 坑 | 说明 | 规避 |
+|----|------|------|
+| FlowEngine 内存态 | 服务重启丢失运行中流程 | `toSnapshot()` 定期持久化到 Redis/DB |
+| 审批并发 | 多用户同时审批同一流程 | 乐观锁 + `waitResolver` 幂等检查 |
+| 大 JSON 字段 | nodes/connections/history 可能很大 | Prisma Json 类型 + 索引 |
+| WebSocket 断线 | 审批等待中断线丢失通知 | 心跳 + 断线重连 + 消息队列兜底 |
+| 类型不一致 | 前后端 FlowNode 定义不同步 | 共享 `types.ts` 到 monorepo 或 npm 包 |
+
+### 启动后端的最小步骤
+
+```bash
+# 1. 创建 Nest.js 项目
+nest new flow-server
+# 2. 移植类型和引擎
+cp -r src/engine/types.ts src/engine/constants.ts src/engine/FlowEngine.ts nest-server/src/shared/
+# 3. 安装依赖
+pnpm add @nestjs/websockets @nestjs/platform-socket.io prisma @prisma/client
+# 4. 编写 flow.gateway.ts + flow.service.ts（参考本文 Nest.js 方案）
+# 5. 启动
+pnpm run start:dev
+```
+
+---
+
+## 🚀 可扩展场景
+
+### 已有基础可直接扩展
+
+| 场景 | 需要的改造 | 现有基础 |
+|------|-----------|----------|
+| **多分支并行审批** | 节点支持 `parallel` 模式 + 汇合网关 | 状态机 + 事件系统可扩 |
+| **条件路由规则引擎** | 集成 `json-rules-engine` | `connections[].action` 作为简易规则 |
+| **动态表单绑定** | 每个审批节点绑定 Formily JSON Schema | 节点 `desc/cmd` 字段可扩展 |
+| **SLA 超时升级** | 节点加 `timeout` 配置 + `node-cron` | `escalate` 节点类型已预留 |
+| **流程版本管理** | Git-like diff + 版本回滚 | DemoHub 已有 JSON diff 算法 |
+| **组织架构集成** | 审批人从组织树查找（非写死） | `operator` 字段可接 LDAP/API |
+| **流程大盘监控** | ECharts/Grafana 图表 | `history` 数据可直接聚合统计 |
+| **多租户 SaaS** | 加 `tenantId` 到模板/实例 | localStorage → DB 迁移即可 |
+
+### 新兴场景
+
+| 场景 | 说明 |
+|------|------|
+| **AI Agent 编排** | 节点不是审批人而是 LLM 调用→输出→下个 Agent |
+| **RPA 流程自动化** | 执行节点对接 Selenium/Puppeteer |
+| **IoT 设备联动** | 节点触发 MQTT 消息→设备动作→回执→继续 |
+| **合规审计链** | history 上链（区块链存证），每次状态变更加签名 |
 
 ---
 
