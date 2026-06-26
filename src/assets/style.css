@@ -1,0 +1,39 @@
+/* ============ D3 Flow Editor - Global Styles ============ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #333;
+  background: #f5f7fa;
+  line-height: 1.6;
+}
+
+a {
+  text-decoration: none;
+  color: #333;
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: #1E90FF;
+}
+
+ul, ol { list-style: none; }
+
+img { max-width: 100%; }
+
+/* 内容容器 */
+.container {
+  width: 1200px;
+  margin: 0 auto;
+  padding: 0 15px;
+}
+
+@media (max-width: 1240px) {
+  .container { width: 100%; padding: 0 15px; }
+}
