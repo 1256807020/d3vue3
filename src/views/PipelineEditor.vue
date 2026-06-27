@@ -11,10 +11,11 @@
         <el-button size="small" text @click="$router.push('/flow')">
           <el-icon><ArrowLeft /></el-icon> 模板列表
         </el-button>
-        <span class="toolbar-title">{{ currentTemplate ? currentTemplate.name + ' — 流程编排' : '流程编排' }}</span>
-        <span v-if="currentTemplate" class="toolbar-type-tag" :style="{background: getTypeInfo(currentTemplate.type).color}">
+        <span class="toolbar-title">{{ currentTemplate ? currentTemplate.name : '流程编排' }}</span>
+        <!-- 先隐藏类型 -->
+        <!-- <span v-if="currentTemplate" class="toolbar-type-tag" :style="{background: getTypeInfo(currentTemplate.type).color}">
           {{ getTypeInfo(currentTemplate.type).label }}
-        </span>
+        </span> -->
         <el-divider direction="vertical" />
 
         <!-- 画布操作按钮 -->
